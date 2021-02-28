@@ -4,6 +4,7 @@ import { SSL_OP_SSLEAY_080_CLIENT_DH_BUG } from "constants";
 import { exit } from "process";
 import { stringify } from "querystring";
 import { ContainerSpec, OrderRequest, ShipmentRecord } from "./interfaces";
+import { ContainerNewInfo, ContainerUsed, Product } from "./newInterfaces";
 
 export class OrderHandler {
   constructor(private parameters: { containerSpecs: ContainerSpec[] }) {}
@@ -14,6 +15,11 @@ export class OrderHandler {
    *  @returns volume: number
   **/
   getVolume(height:number, breadth:number, width:number): number {
+    if(height < 0 || breadth < 0 || width < 0){
+      throw new Error ("Dimensions should not be negative");
+    } else if (height == null || breadth == null || width == null){
+      throw new Error ("Dimensions are empty");
+    }
     return height*breadth*width;
   }
 
@@ -22,16 +28,16 @@ export class OrderHandler {
    *  @param height:number, breadth:number, width:number
    *  @returns container_info: Array<>
   **/
-  getContainerInfo(){
-    let container_info:Array<{containerType:string, dimensions:{length:number, height:number, width:number, containerVol:number, arr:number[]}}> = [];
+  getContainerInfo() : Array<ContainerNewInfo>{
+    let container_info: Array<ContainerNewInfo> = [];
     this.parameters.containerSpecs.forEach(element => {
       
-      var x:number = element.dimensions.length;
-      var y:number = element.dimensions.height;
-      var z:number = element.dimensions.width;
+      const x:number = element.dimensions.length;
+      const y:number = element.dimensions.height;
+      const z:number = element.dimensions.width;
 
       const volume:number = this.getVolume(x,y,z)
-      var container:string = element.containerType;
+      const container:string = element.containerType;
       container_info.push({containerType: container, dimensions:{length:x, height: y, width: z, containerVol: volume, arr:[x,y,z]}});
     });
     return container_info;
@@ -50,10 +56,10 @@ export class OrderHandler {
    *    }
    *  }>
   **/
-  compareSingleVolume(pdt_volume:number){
+  compareSingleVolume(pdt_volume: number) : Array<ContainerNewInfo>{
     const container_info = this.getContainerInfo();  
     
-    for (var i:number = container_info.length-1; i >= 0; i--){
+    for (let i:number = container_info.length-1; i >= 0; i--){
       const container_vol = container_info[i].dimensions.containerVol;
       // console.log("Cross check with container: " + container_info[i].containerType);
       if (pdt_volume > container_vol){
@@ -68,7 +74,7 @@ export class OrderHandler {
    *  @param usable_container: Array<T>;
    *  @returns boolean
   **/
-  checkAvailContainer(usable_container:Array<{containerType:string, dimensions:{length:number, height:number, width:number, containerVol:number,arr:number[]}}>){
+  checkAvailContainer(usable_container: Array<ContainerNewInfo>){
     if (usable_container.length > 0){
       return true;
     } else{
@@ -96,12 +102,12 @@ export class OrderHandler {
     }
   } 
 
-  compareSides(usable_container:Array<{containerType:string, dimensions:{length:number, height:number, width:number, containerVol:number,arr:number[]}}>, pdt_arr:{arr:number[], length:number, height:number, width:number}) : void{
+  compareSides(usable_container:Array<ContainerNewInfo>, pdt_arr:{arr:number[], length:number, height:number, width:number}) : void{
     usable_container.forEach(element => {
-      var container_array = element.dimensions.arr;
+      let container_array = element.dimensions.arr;
       if (container_array.length > 0){
-        var largest_side_product = this.getMax(pdt_arr.arr);
-        var largest_side_container = this.getMax(container_array);
+        const largest_side_product = this.getMax(pdt_arr.arr);
+        const largest_side_container = this.getMax(container_array);
         if (this.compareLarger(largest_side_container, largest_side_product)){
           usable_container.splice(usable_container.indexOf(element),1);
         } else {
@@ -121,7 +127,7 @@ export class OrderHandler {
     
   }
 
-  getNumberOfContainer(usable_container:Array<{containerType:string, dimensions:{length:number, height:number, width:number, containerVol:number,arr:number[]}}>, pdt_quantity:number, pdt_vol:number){
+  getNumberOfContainer(usable_container:Array<ContainerNewInfo>, pdt_quantity:number, pdt_vol:number) : ContainerUsed{
     const total_pdt_vol: number = pdt_vol * pdt_quantity;
     const container_vol = usable_container[0].dimensions.containerVol;
     
@@ -135,14 +141,11 @@ export class OrderHandler {
         num_containers = Math.ceil(pdt_quantity/max_fit_in_one); 
       } 
     }
-    return {containerType: usable_container[0].containerType, totalNum: num_containers, maxPerContainer: Math.floor(max_fit_in_one)};    
+    return {containerType: usable_container[0].containerType, totalNum: num_containers, maxPerContainer: Math.floor(max_fit_in_one), containerVol: container_vol};    
   }
 
-  packOrder(orderRequest: OrderRequest): ShipmentRecord {
-    /* TODO: replace with actual implementation */
-    
-    const orderProducts = orderRequest.products;
-    var record: ShipmentRecord = {
+  getRecord(pdt_quantity: number, container_used: ContainerUsed, orderProducts:Array<Product>, orderId:string, unit:string) : ShipmentRecord{
+    let record: ShipmentRecord = {
       orderId: "",
       totalVolume: { // volume of ALL containers
         unit: "",
@@ -151,10 +154,53 @@ export class OrderHandler {
       containers: [] // record of each container used. quantity - number of product packed inside.
     };
 
-    console.log("ORDER REQUEST: " + orderRequest.id);
-    var usable_container;
+    let container_pdts: Array<{id:string, quantity:number}> = []; ////// CONTAINING PDTS
+    let containers: Array<{containerType:string, containingProducts:Array<{id:string, quantity:number}>}> = []; //// CONTAINER
     
-    for (var i = 0; i < orderProducts.length; i++){
+    const lastbox:number = pdt_quantity % container_used.maxPerContainer;
+ 
+    if(lastbox != 0){
+      // IF REMAINDER
+      for (let i=0; i < container_used.totalNum-1; i++){
+        // PUSH MAX BOXES
+        container_pdts = [];
+        container_pdts.push({id:orderProducts[0].id, quantity: container_used.maxPerContainer});   
+        containers.push({containerType: container_used.containerType, containingProducts: container_pdts}); 
+      }
+      
+      // PUSH LAST BOX
+      container_pdts = [];
+      container_pdts.push({id:orderProducts[orderProducts.length-1].id, quantity: lastbox});
+      containers.push({containerType: container_used.containerType, containingProducts: container_pdts}); 
+
+    } else{
+      for (let j=0; j < container_used.totalNum; j++){
+        container_pdts = [];
+        container_pdts.push({id:orderProducts[0].id, quantity: container_used.maxPerContainer});
+        containers.push({containerType: container_used.containerType, containingProducts: container_pdts}); 
+       
+      } 
+    }
+
+    // Push Record.  
+    record.orderId = orderId;
+    record.totalVolume.unit = "cubic " + unit;
+    record.totalVolume.value = container_used.totalNum*container_used.containerVol;
+    record.containers = containers;
+    return record;
+  }
+
+  packOrder(orderRequest: OrderRequest): ShipmentRecord {
+    /* TODO: replace with actual implementation */
+    
+    const orderProducts = orderRequest.products;
+    console.log("ORDER REQUEST: " + orderRequest.id);
+   
+    let usable_container: Array<ContainerNewInfo>;
+    let record: ShipmentRecord;
+    
+    
+    for (let i = 0; i < orderProducts.length; i++){
       const pdt_x:number = orderProducts[i].dimensions.length;
       const pdt_y:number = orderProducts[i].dimensions.height;
       const pdt_z:number = orderProducts[i].dimensions.width;
@@ -172,54 +218,15 @@ export class OrderHandler {
         this.compareSides(usable_container, pdt_vals);
          
         // // 3. Pack into container
-        let pdt_quantity = orderProducts[i].orderedQuantity;
-        let container_used = this.getNumberOfContainer(usable_container, pdt_quantity, pdt_volume); 
-        var container_pdts: Array<{id:string, quantity:number}> = []; ////// CONTAINING PDTS
-        var containers: Array<{containerType:string, containingProducts:Array<{id:string, quantity:number}>}> = []; //// CONTAINER
-        
-        ////// FUNCTION GHERE ////////
+        const pdt_quantity: number = orderProducts[i].orderedQuantity;
+        const container_used = this.getNumberOfContainer(usable_container, pdt_quantity, pdt_volume);
 
-        var lastbox:number = pdt_quantity % container_used.maxPerContainer;
-        // if got remainder: lastbox != 0;
-
-        if(lastbox != 0){
-          // IF REMAINDER
-          for (var i=0; i < container_used.totalNum-1; i++){
-            // PUSH MAX BOXES
-            container_pdts = [];
-            container_pdts.push({id:orderProducts[i].id, quantity: container_used.maxPerContainer});   
-            containers.push({containerType: usable_container[0].containerType, containingProducts: container_pdts}); 
-           
-          }
-          
-          // PUSH LAST BOX
-          container_pdts = [];
-          container_pdts.push({id:orderProducts[orderProducts.length-1].id, quantity: lastbox});
-          containers.push({containerType: usable_container[0].containerType, containingProducts: container_pdts}); 
-  
-        } else{
-          for (var j=0; j < container_used.totalNum; j++){
-    
-            container_pdts = [];
-            container_pdts.push({id:orderProducts[0].id, quantity: container_used.maxPerContainer});
-            containers.push({containerType: usable_container[0].containerType, containingProducts: container_pdts}); 
-           
-          } 
-        }
-       
-       
-
-        // Push Record.  
-        record.orderId = orderRequest.id;
-        record.totalVolume.unit = "cubic " + unit;
-        record.totalVolume.value = container_used.totalNum*usable_container[0].dimensions.containerVol;
-        record.containers = containers;
+        record = this.getRecord(pdt_quantity, container_used, orderProducts, orderRequest.id, unit);  
       }
 
-    };
-
+    };  
+    
     console.log(JSON.stringify(record));
-
     return record;
 
   }
