@@ -11,11 +11,10 @@ export class OrderHandler {
 
   getVolume(length:number, height:number, width:number): number {
     if(length < 0 || height < 0 || width < 0){
-      throw new Error ("Dimensions should not be negative");
-    } else if (!length || !height || !width){
-      throw new Error ("Dimensions are empty");
+      throw new Error("Dimensions should not be negative");
+    } else{
+      return length*height*width;
     }
-    return length*height*width;
   }
 
   getContainerInfo() : Array<ContainerNewInfo>{
@@ -42,11 +41,18 @@ export class OrderHandler {
   }
 
   getMax(arr: number[]) : number{
+    if (arr.length < 1){
+      throw new Error ("Input Array for getMax cannot be null");
+    }
+
     const largest_num = Math.max(...arr);
     return largest_num;   
   }
 
   compareLarger(container_side:number, product_side:number) : boolean{
+    if (container_side < 0 || product_side < 0){
+      throw new Error("Dimensions should not be a negative number");
+    }
     if (product_side > container_side){
       return true;
     } else {
