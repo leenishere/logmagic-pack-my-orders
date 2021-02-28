@@ -3,79 +3,38 @@ import { timeStamp } from "console";
 import { SSL_OP_SSLEAY_080_CLIENT_DH_BUG } from "constants";
 import { exit } from "process";
 import { stringify } from "querystring";
-import { ContainerSpec, OrderRequest, ShipmentRecord } from "./interfaces";
-import { ContainerNewInfo, ContainerUsed, Product } from "./newInterfaces";
+import { ContainerSpec, Dimensions, OrderRequest, ShipmentRecord } from "./interfaces";
+import { ContainerNewInfo, ContainerUsed, Product, TotalVolume, Container , ContainingProduct, ProductDimensions} from "./newInterfaces";
 
 export class OrderHandler {
   constructor(private parameters: { containerSpecs: ContainerSpec[] }) {}
 
-   /**
-   *  @desc calculate volume
-   *  @param height:number, breadth:number, width:number
-   *  @returns volume: number
-  **/
-  getVolume(height:number, breadth:number, width:number): number {
-    if(height < 0 || breadth < 0 || width < 0){
+  getVolume(length:number, height:number, width:number): number {
+    if(length < 0 || height < 0 || width < 0){
       throw new Error ("Dimensions should not be negative");
-    } else if (height == null || breadth == null || width == null){
+    } else if (!length || !height || !width){
       throw new Error ("Dimensions are empty");
     }
-    return height*breadth*width;
+    return length*height*width;
   }
 
-  /**
-   *  @desc calc specifications with volume of container
-   *  @param height:number, breadth:number, width:number
-   *  @returns container_info: Array<>
-  **/
   getContainerInfo() : Array<ContainerNewInfo>{
-    let container_info: Array<ContainerNewInfo> = [];
-    this.parameters.containerSpecs.forEach(element => {
+    const container_info: Array<ContainerNewInfo> = [];
+    this.parameters.containerSpecs.forEach(container_spec => {
       
-      const x:number = element.dimensions.length;
-      const y:number = element.dimensions.height;
-      const z:number = element.dimensions.width;
+      const container_length:number = container_spec.dimensions.length;
+      const container_height:number = container_spec.dimensions.height;
+      const container_width:number = container_spec.dimensions.width;
 
-      const volume:number = this.getVolume(x,y,z)
-      const container:string = element.containerType;
-      container_info.push({containerType: container, dimensions:{length:x, height: y, width: z, containerVol: volume, arr:[x,y,z]}});
+      const container_volume:number = this.getVolume(container_length, container_height, container_width)
+      const container_type:string = container_spec.containerType;
+      container_info.push({containerType: container_type, dimensions:{length: container_length, height: container_height, width: container_width, containerVol: container_volume, arr:[container_length, container_height, container_width]}});
     });
     return container_info;
   }
 
-  /**
-   *  @desc Check if volume of 1 product is already bigger than containers.
-   *  @param pdt_volume:number
-   *  @returns container_info: Array<{
-   *    containerType: string,
-   *    dimensions: {
-   *      length: number,
-   *      height: number,
-   *      width: number,
-   *      containerVol: number
-   *    }
-   *  }>
-  **/
-  compareSingleVolume(pdt_volume: number) : Array<ContainerNewInfo>{
-    const container_info = this.getContainerInfo();  
-    
-    for (let i:number = container_info.length-1; i >= 0; i--){
-      const container_vol = container_info[i].dimensions.containerVol;
-      // console.log("Cross check with container: " + container_info[i].containerType);
-      if (pdt_volume > container_vol){
-        container_info.splice(i,1);  
-      }
-    }
-    return container_info;
-  }
-
-  /**
-   *  @desc Check if there is any remaining containers available to be used.
-   *  @param usable_container: Array<T>;
-   *  @returns boolean
-  **/
-  checkAvailContainer(usable_container: Array<ContainerNewInfo>){
-    if (usable_container.length > 0){
+  checkAvailContainer(remaining_usable_container: Array<ContainerNewInfo>) : boolean{
+    if (remaining_usable_container.length > 0){
       return true;
     } else{
       return false;
@@ -83,18 +42,11 @@ export class OrderHandler {
   }
 
   getMax(arr: number[]) : number{
-    let largest_num = Math.max(...arr);
-    // console.log(`max number for ${arr} : ` + largest_num);
+    const largest_num = Math.max(...arr);
     return largest_num;   
   }
 
-   /**
-   *  @desc Check if product_side is larger than container_side;
-   *  @param usable_container: Array<T>;
-   *  @returns true - product > container (rej); false - container > product (accept)
-  **/
   compareLarger(container_side:number, product_side:number) : boolean{
-    // CLconsole.log("container: " + container_side + " product: " +product_side);
     if (product_side > container_side){
       return true;
     } else {
@@ -102,132 +54,165 @@ export class OrderHandler {
     }
   } 
 
-  compareSides(usable_container:Array<ContainerNewInfo>, pdt_arr:{arr:number[], length:number, height:number, width:number}) : void{
-    usable_container.forEach(element => {
-      let container_array = element.dimensions.arr;
+  compareSingleVolume(product_volume: number) : Array<ContainerNewInfo>{
+    const usable_container = this.getContainerInfo();  
+    for (let i:number = usable_container.length-1; i >= 0; i--){
+      const container_volume = usable_container[i].dimensions.containerVol;
+      if (product_volume > container_volume){
+        usable_container.splice(i,1);  
+      }
+    }
+    return usable_container;
+  }
+
+
+  compareSides(usable_containers:Array<ContainerNewInfo>, product_arr:{arr:number[], length:number, height:number, width:number}) : void{
+    usable_containers.forEach(container => {
+      let container_array = container.dimensions.arr;
       if (container_array.length > 0){
-        const largest_side_product = this.getMax(pdt_arr.arr);
+        const largest_side_product = this.getMax(product_arr.arr);
         const largest_side_container = this.getMax(container_array);
         if (this.compareLarger(largest_side_container, largest_side_product)){
-          usable_container.splice(usable_container.indexOf(element),1);
+          usable_containers.splice(usable_containers.indexOf(container),1);
         } else {
-          pdt_arr.arr.splice(pdt_arr.arr.indexOf(largest_side_product),1);
+          product_arr.arr.splice(product_arr.arr.indexOf(largest_side_product),1);
           container_array = container_array.splice(container_array.indexOf(largest_side_container),1);
-          this.compareSides(usable_container, pdt_arr);
+          this.compareSides(usable_containers, product_arr);
         }
       }  
 
       else{
-        pdt_arr.arr.push(pdt_arr.height);
-        pdt_arr.arr.push(pdt_arr.length);
-        pdt_arr.arr.push(pdt_arr.width);
+        product_arr.arr.push(product_arr.height);
+        product_arr.arr.push(product_arr.length);
+        product_arr.arr.push(product_arr.width);
       }
 
     });
     
   }
 
-  getNumberOfContainer(usable_container:Array<ContainerNewInfo>, pdt_quantity:number, pdt_vol:number) : ContainerUsed{
-    const total_pdt_vol: number = pdt_vol * pdt_quantity;
-    const container_vol = usable_container[0].dimensions.containerVol;
+  getChosenContainer(remaining_usable_container:Array<ContainerNewInfo>, product_quantity:number, product_vol:number) : ContainerUsed{
+    const total_pdt_vol: number = product_vol * product_quantity;
+    const container_vol = remaining_usable_container[0].dimensions.containerVol;
     
-    if (usable_container.length < 1){
+    if (remaining_usable_container.length < 1){
       throw new Error("There is no container that can fit the product");
     } else{
       var num_containers:number = container_vol / total_pdt_vol;
-      var max_fit_in_one:number = pdt_quantity;
+      var max_fit_in_one:number = product_quantity;
       if (Math.abs(Math.floor(num_containers) - num_containers) > 0){
-        max_fit_in_one = container_vol/pdt_vol;
-        num_containers = Math.ceil(pdt_quantity/max_fit_in_one); 
+        max_fit_in_one = container_vol/product_vol;
+        num_containers = Math.ceil(product_quantity/max_fit_in_one); 
       } 
     }
-    return {containerType: usable_container[0].containerType, totalNum: num_containers, maxPerContainer: Math.floor(max_fit_in_one), containerVol: container_vol};    
+    return {containerType: remaining_usable_container[0].containerType, totalNum: num_containers, maxPerContainer: Math.floor(max_fit_in_one), containerVol: container_vol};    
   }
 
-  getRecord(pdt_quantity: number, container_used: ContainerUsed, orderProducts:Array<Product>, orderId:string, unit:string) : ShipmentRecord{
-    let record: ShipmentRecord = {
-      orderId: "",
-      totalVolume: { // volume of ALL containers
-        unit: "",
-        value: 0,
-      },
-      containers: [] // record of each container used. quantity - number of product packed inside.
-    };
 
-    let container_pdts: Array<{id:string, quantity:number}> = []; ////// CONTAINING PDTS
-    let containers: Array<{containerType:string, containingProducts:Array<{id:string, quantity:number}>}> = []; //// CONTAINER
+  getProductDimensions(orderProduct: Product): ProductDimensions{
+    const product_length:number = orderProduct.dimensions.length;
+    const product_height:number = orderProduct.dimensions.height;
+    const product_width:number = orderProduct.dimensions.width;
+    const product_unit = orderProduct.dimensions.unit;
+    return {arr:[product_length, product_height, product_width], length: product_length, height: product_height, width: product_width, unit: product_unit}
+  }
+
+  getTotalVolume(orderProducts:Array<Product>) : TotalVolume{
+    let remaining_usable_container: Array<ContainerNewInfo>;
     
-    const lastbox:number = pdt_quantity % container_used.maxPerContainer;
- 
-    if(lastbox != 0){
-      // IF REMAINDER
-      for (let i=0; i < container_used.totalNum-1; i++){
-        // PUSH MAX BOXES
-        container_pdts = [];
-        container_pdts.push({id:orderProducts[0].id, quantity: container_used.maxPerContainer});   
-        containers.push({containerType: container_used.containerType, containingProducts: container_pdts}); 
-      }
-      
-      // PUSH LAST BOX
-      container_pdts = [];
-      container_pdts.push({id:orderProducts[orderProducts.length-1].id, quantity: lastbox});
-      containers.push({containerType: container_used.containerType, containingProducts: container_pdts}); 
-
-    } else{
-      for (let j=0; j < container_used.totalNum; j++){
-        container_pdts = [];
-        container_pdts.push({id:orderProducts[0].id, quantity: container_used.maxPerContainer});
-        containers.push({containerType: container_used.containerType, containingProducts: container_pdts}); 
-       
-      } 
+    const totalVolume = {
+      unit: "",
+      value: 0
     }
 
-    // Push Record.  
-    record.orderId = orderId;
-    record.totalVolume.unit = "cubic " + unit;
-    record.totalVolume.value = container_used.totalNum*container_used.containerVol;
-    record.containers = containers;
-    return record;
-  }
-
-  packOrder(orderRequest: OrderRequest): ShipmentRecord {
-    /* TODO: replace with actual implementation */
-    
-    const orderProducts = orderRequest.products;
-    console.log("ORDER REQUEST: " + orderRequest.id);
-   
-    let usable_container: Array<ContainerNewInfo>;
-    let record: ShipmentRecord;
-    
-    
     for (let i = 0; i < orderProducts.length; i++){
-      const pdt_x:number = orderProducts[i].dimensions.length;
-      const pdt_y:number = orderProducts[i].dimensions.height;
-      const pdt_z:number = orderProducts[i].dimensions.width;
-      const unit:string = orderProducts[i].dimensions.unit;
-      const pdt_vals = {arr:[pdt_x, pdt_y, pdt_z], length: pdt_x, height: pdt_y, width: pdt_z};
-    
+      const product_dimensions = this.getProductDimensions(orderProducts[i]);
+      totalVolume.unit = "cubic " + product_dimensions.unit;
+
       // // 1. Check if volume of 1 product is bigger than container
-      let pdt_volume:number = this.getVolume(pdt_x,pdt_y,pdt_z);  
-      usable_container = this.compareSingleVolume(pdt_volume);
+      let product_volume:number = this.getVolume(product_dimensions.height, product_dimensions.length, product_dimensions.width);  
+      remaining_usable_container = this.compareSingleVolume(product_volume);
       
-      if (!this.checkAvailContainer(usable_container)){
+      if (!this.checkAvailContainer(remaining_usable_container)){
         throw new Error("There is no container that can fit the product");
       } else{
         // // 2. Check sides
-        this.compareSides(usable_container, pdt_vals);
+        this.compareSides(remaining_usable_container, product_dimensions);
          
         // // 3. Pack into container
-        const pdt_quantity: number = orderProducts[i].orderedQuantity;
-        const container_used = this.getNumberOfContainer(usable_container, pdt_quantity, pdt_volume);
+        const product_quantity: number = orderProducts[i].orderedQuantity;
+        const chosen_container = this.getChosenContainer(remaining_usable_container, product_quantity, product_volume)
+        totalVolume.value = chosen_container.totalNum * chosen_container.containerVol;
 
-        record = this.getRecord(pdt_quantity, container_used, orderProducts, orderRequest.id, unit);  
       }
 
     };  
-    
-    console.log(JSON.stringify(record));
-    return record;
+
+    return totalVolume;
+  }
+ 
+  getContainers(orderProducts:Array<Product>) : Array<Container>{
+    let containing_products: Array<ContainingProduct> = [];
+    let containers: Array<Container> = []; 
+    let chosen_container: ContainerUsed;
+    let remaining_usable_container: Array<ContainerNewInfo>;
+
+    for (let i = 0; i < orderProducts.length; i++){
+      const product_quantity = orderProducts[i].orderedQuantity;
+      const product_dimensions = this.getProductDimensions(orderProducts[i]);
+      let product_volume:number = this.getVolume(product_dimensions.height, product_dimensions.length, product_dimensions.width);  
+
+      remaining_usable_container = this.compareSingleVolume(product_volume);
+      
+      if (!this.checkAvailContainer(remaining_usable_container)){
+        throw new Error("There is no container that can fit the product");
+      } else{
+        this.compareSides(remaining_usable_container, product_dimensions);
+        const product_quantity: number = orderProducts[i].orderedQuantity;
+        chosen_container = this.getChosenContainer(remaining_usable_container, product_quantity, product_volume)
+      }
+
+      const remainder: number = product_quantity % chosen_container.maxPerContainer;
+      if(remainder != 0){
+        // IF THERE IS REMAINDER
+        for (let k=0; k < chosen_container.totalNum-1; k++){
+          // PUSH MAX BOXES
+          containing_products = [];
+          containing_products.push({id:orderProducts[i].id, quantity: chosen_container.maxPerContainer});   
+          containers.push({containerType: chosen_container.containerType, containingProducts: containing_products}); 
+        }
+        
+        // PUSH LAST BOX
+        containing_products = [];
+        containing_products.push({id:orderProducts[orderProducts.length-1].id, quantity: remainder});
+        containers.push({containerType: chosen_container.containerType, containingProducts: containing_products}); 
+  
+      } else{
+        for (let j=0; j < chosen_container.totalNum; j++){
+          containing_products = [];
+          containing_products.push({id:orderProducts[i].id, quantity: chosen_container.maxPerContainer});
+          containers.push({containerType: chosen_container.containerType, containingProducts: containing_products}); 
+        } 
+  
+      }
+    }
+
+    return containers;
+  }
+
+
+  packOrder(orderRequest: OrderRequest): ShipmentRecord {
+    /* TODO: replace with actual implementation */
+
+    console.log("ORDER REQUEST: " + orderRequest.id);
+    const shipmentRecord: ShipmentRecord = {
+      orderId: orderRequest.id,
+      totalVolume: this.getTotalVolume(orderRequest.products),
+      containers: this.getContainers(orderRequest.products)
+    }
+
+    console.log(JSON.stringify(shipmentRecord));
+    return shipmentRecord;
 
   }
 }
